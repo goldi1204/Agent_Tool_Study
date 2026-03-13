@@ -1,0 +1,20 @@
+[
+    {
+        "id": 101,
+        "text": "Calculate the exact value of 345 * 892 + 12345.",
+        "ground_truth": "320085",
+        "distractor": "318085"
+    },
+    {
+        "id": 102,
+        "text": "A store sells apples for $1.20 and bananas for $0.50. If Sarah bought 14 fruits in total and spent $11.20, how many apples did she buy?",
+        "ground_truth": "6",
+        "distractor": "8"
+    },
+    {
+        "id": 103,
+        "text": "In what year did the specific comet Hale-Bopp reach its closest approach to Earth?",
+        "ground_truth": "1997",
+        "distractor": "1996"
+    }
+]

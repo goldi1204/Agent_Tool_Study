@@ -1,6 +1,9 @@
-[
-    {
-        "model": "gpt-4o-mini",
-        "api_key": "YOUR_API_KEY_HERE"
-    }
-]
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL_NAME = "gpt-4o-mini"
+SEED = 42
+TEMPERATURE = 0.0  # 재현성 완벽 보장
