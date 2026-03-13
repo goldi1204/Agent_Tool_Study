@@ -1,0 +1,73 @@
+# =========================
+# 1. 환경 변수 및 시크릿 키 (절대 커밋되면 안 됨)
+# =========================
+.env
+.env.*
+*.pem
+
+# =========================
+# 2. 실험 결과 및 데이터 로그
+# =========================
+# AutoGen이나 스크립트가 생성하는 결과물들
+results/
+logs/
+*_results.csv
+*_results.json
+*result_log.json
+debate_experiment_results.csv
+pilot_results.json
+
+# (선택) 만약 원본 데이터셋도 무거워서 빼고 싶다면 아래 주석을 해제하세요
+# data/*.json
+# data/*.csv
+
+# =========================
+# 3. Python 기본 캐시 및 빌드 파일
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================
+# 4. 가상 환경 (Virtual Environments)
+# =========================
+venv/
+.venv/
+env/
+.env_venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# 5. Jupyter Notebook 캐시
+# =========================
+.ipynb_checkpoints/
+ipython_config.py
+
+# =========================
+# 6. IDE 및 OS 캐시 파일
+# =========================
+# VSCode
+.vscode/
+# PyCharm / IntelliJ
+.idea/
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
