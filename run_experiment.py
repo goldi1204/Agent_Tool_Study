@@ -6,6 +6,7 @@ import os
 from configs.prompts import SYSTEM_PROMPTS, CONDITIONS
 from src.tools import simulate_tool
 from src.utils import get_json_response, get_tool_intercepted_response, get_tool_autonomous_response, count_challenges
+from src.dataset_loaders import load_dataset_generic, validate_dataset_schema
 
 AGENT_TOOL_ACCESS = {
     "A": True,
@@ -120,12 +121,19 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
     }
 
 def main():
-    with open('dataset.json', 'r', encoding='utf-8') as f:
-        dataset = json.load(f)
+    DATA_SOURCE = os.getenv("DATA_SOURCE", "json:dataset.json")
+    MAX_EXAMPLES = int(os.getenv("MAX_EXAMPLES", "0"))
+    
+    max_examples = MAX_EXAMPLES if MAX_EXAMPLES > 0 else None
+    dataset = load_dataset_generic(DATA_SOURCE, max_examples=max_examples)
+    validate_dataset_schema(dataset)
     
     all_results = []
     skipped_count = 0
     print(f"🚀 [Function Calling 탑재] 순수 파이썬 API 실험 시작... (총 {len(dataset)}문제)")
+    print(f"📊 데이터 소스: {DATA_SOURCE}")
+    if max_examples:
+        print(f"🔢 최대 예제 수: {max_examples}")
     
     for data in dataset:
         for cond in CONDITIONS:

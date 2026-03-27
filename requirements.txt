@@ -1,3 +1,7 @@
 pyautogen==0.2.27  # 버전 명시 (버전업에 따른 API 변경 방지)
 python-dotenv==1.0.1
 pandas==2.2.0      # 결과 분석용
+datasets>=2.12.0   # HuggingFace 데이터셋 로딩
+openai>=1.0.0      # OpenAI API 클라이언트
+tavily-python>=0.3.0  # 외부 검색 API (선택사항)
+tenacity>=8.0.0    # Retry 로직
