@@ -2,9 +2,12 @@
 
 import json
 from openai import OpenAI
-from configs.llm_config import OPENAI_API_KEY, MODEL_NAME, TEMPERATURE, SEED
+from configs.llm_config import OPENAI_API_KEY, LITELLM_PROXY_URL, MODEL_NAME, TEMPERATURE, SEED
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    base_url=LITELLM_PROXY_URL
+)
 
 # 1. 일반적인 JSON 응답 (도구 미사용)
 def get_json_response(system_prompt: str, user_prompt: str) -> dict:

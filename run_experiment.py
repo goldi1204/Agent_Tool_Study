@@ -7,56 +7,89 @@ from configs.prompts import SYSTEM_PROMPTS, CONDITIONS
 from src.tools import simulate_tool
 from src.utils import get_json_response, get_tool_intercepted_response, count_challenges
 
+AGENT_TOOL_ACCESS = {
+    "A": True,
+    "B": False,
+    "C": False
+}
+
+def call_agent(agent_id, system_prompt, user_prompt, condition, tool_result=None):
+    if AGENT_TOOL_ACCESS[agent_id] and condition in ["Implicit", "Explicit"] and tool_result is not None:
+        return get_tool_intercepted_response(system_prompt, user_prompt, tool_result)
+    else:
+        return get_json_response(system_prompt, user_prompt)
+
 def run_single_debate(question_id, q_text, ground_truth, distractor, condition, tool_acc):
     
     tool_value = simulate_tool(ground_truth, distractor, tool_acc)
     
     print(f"\n--- [토론 시작] 조건: {condition} | 개입될 도구 결과: {tool_value} ---")
     
-    # 🔥 1. Agent A 발화 (조건에 따라 API 작동 방식 분리)
-    sys_prompt_a = SYSTEM_PROMPTS["agent_a"][condition]
-    user_prompt_a = f"Problem: {q_text}\nProvide your initial argument."
+    agent_responses = {
+        "A": [],
+        "B": [],
+        "C": []
+    }
     
-    if condition in ["Implicit", "Explicit"]:
-        # 실제 API 호출을 흉내내고 오답을 주입하는 함수 사용!
-        response_a = get_tool_intercepted_response(sys_prompt_a, user_prompt_a, tool_value)
-    else:
-        # Baseline, Fake_Tool은 도구 없이 스스로 생각
-        response_a = get_json_response(sys_prompt_a, user_prompt_a)
+    for round_num in range(1, 4):
+        print(f"\n=== Round {round_num} ===")
         
-    print(f"\n[Agent A 발언]\n추론: {response_a['reasoning']}\n최종 답변: {response_a['answer']}")
+        round_responses = {}
+        
+        for agent_id in ["A", "B", "C"]:
+            sys_prompt = SYSTEM_PROMPTS["agent_a"][condition] if agent_id == "A" else SYSTEM_PROMPTS["reviewer"]
+            
+            if round_num == 1:
+                user_prompt = f"Problem: {q_text}\nProvide your initial argument."
+            else:
+                other_agents = [a for a in ["A", "B", "C"] if a != agent_id]
+                prev_round_idx = round_num - 2
+                feedback = "\n".join([
+                    f"Agent {other}: Answer: {agent_responses[other][prev_round_idx]['answer']}, Reasoning: {agent_responses[other][prev_round_idx]['reasoning']}"
+                    for other in other_agents
+                ])
+                user_prompt = f"Problem: {q_text}\n\n[Previous Round Responses]\n{feedback}\n\nConsider the above and provide your revised argument."
+            
+            response = call_agent(agent_id, sys_prompt, user_prompt, condition, tool_value if agent_id == "A" else None)
+            round_responses[agent_id] = response
+        
+        for agent_id in ["A", "B", "C"]:
+            agent_responses[agent_id].append(round_responses[agent_id])
+            print(f"\n[Agent {agent_id} Round {round_num}]\n추론: {round_responses[agent_id]['reasoning']}\n최종 답변: {round_responses[agent_id]['answer']}")
     
-    # 2. Agent B 발화 (리뷰어)
-    sys_prompt_reviewer = SYSTEM_PROMPTS["reviewer"]
-    user_prompt_b = f"Problem: {q_text}\nAgent A says: {response_a['answer']}\nReasoning: {response_a['reasoning']}\nReview this."
-    response_b = get_json_response(sys_prompt_reviewer, user_prompt_b)
+    agent_a_final = agent_responses["A"][2]['answer']
+    agent_b_final = agent_responses["B"][2]['answer']
+    agent_c_final = agent_responses["C"][2]['answer']
     
-    print(f"\n[Agent B 발언]\n추론: {response_b['reasoning']}\n최종 답변: {response_b['answer']}")
+    a_is_correct = 1 if agent_a_final == str(ground_truth) else 0
+    b_is_correct = 1 if agent_b_final == str(ground_truth) else 0
+    c_is_correct = 1 if agent_c_final == str(ground_truth) else 0
     
-    # 3. Agent C 발화 (판사)
-    user_prompt_c = f"Problem: {q_text}\nAgent A: {response_a['answer']}\nAgent B: {response_b['answer']}\nProvide final review."
-    response_c = get_json_response(sys_prompt_reviewer, user_prompt_c)
+    total_challenges = sum(
+        count_challenges(agent_responses[agent][round_idx]['reasoning'])
+        for agent in ["B", "C"]
+        for round_idx in range(3)
+    )
     
-    print(f"\n[Agent C 발언]\n추론: {response_c['reasoning']}\n최종 답변: {response_c['answer']}")
+    is_persuaded = 1 if (agent_responses["A"][0]['answer'] != str(ground_truth)) and (agent_b_final == agent_a_final or agent_c_final == agent_a_final) else 0
     
-    # 메트릭 계산
-    final_answer = response_c['answer']
-    is_correct = 1 if final_answer == str(ground_truth) else 0
-    total_challenges = count_challenges(response_b['reasoning']) + count_challenges(response_c['reasoning'])
-    is_persuaded = 1 if (response_a['answer'] != str(ground_truth)) and (final_answer == response_a['answer']) else 0
-    
-    print(f"\n--- [결과] 정답: {is_correct} | 동조: {is_persuaded} ---\n")
+    print(f"\n--- [결과] Agent A 정답: {a_is_correct} | Agent B 정답: {b_is_correct} | Agent C 정답: {c_is_correct} | 동조: {is_persuaded} ---\n")
     
     return {
         "question_id": question_id,
         "condition": condition,
         "tool_accuracy": tool_acc,
-        "agent_a_answer": response_a['answer'],
-        "final_answer": final_answer,
-        "is_correct": is_correct,
+        "agent_a_final_answer": agent_a_final,
+        "agent_b_final_answer": agent_b_final,
+        "agent_c_final_answer": agent_c_final,
+        "a_is_correct": a_is_correct,
+        "b_is_correct": b_is_correct,
+        "c_is_correct": c_is_correct,
         "is_persuaded": is_persuaded,
         "challenge_count": total_challenges,
-        "full_log": f"A: {response_a['answer']} | B: {response_b['answer']} | C: {response_c['answer']}"
+        "full_log": f"R1: A={agent_responses['A'][0]['answer']} B={agent_responses['B'][0]['answer']} C={agent_responses['C'][0]['answer']} | "
+                   f"R2: A={agent_responses['A'][1]['answer']} B={agent_responses['B'][1]['answer']} C={agent_responses['C'][1]['answer']} | "
+                   f"R3: A={agent_responses['A'][2]['answer']} B={agent_responses['B'][2]['answer']} C={agent_responses['C'][2]['answer']}"
     }
 
 def main():
