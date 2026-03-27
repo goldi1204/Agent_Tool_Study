@@ -5,7 +5,7 @@ import json
 import os
 from configs.prompts import SYSTEM_PROMPTS, CONDITIONS
 from src.tools import simulate_tool
-from src.utils import get_json_response, get_tool_intercepted_response, count_challenges
+from src.utils import get_json_response, get_tool_intercepted_response, get_tool_autonomous_response, count_challenges
 
 AGENT_TOOL_ACCESS = {
     "A": True,
@@ -13,8 +13,24 @@ AGENT_TOOL_ACCESS = {
     "C": False
 }
 
+def normalize_answer(answer: str) -> str:
+    if not isinstance(answer, str):
+        answer = str(answer)
+    
+    import re
+    normalized = answer.strip().lower()
+    normalized = re.sub(r'[,\s]+', '', normalized)
+    
+    try:
+        num = float(normalized)
+        return str(int(num)) if num.is_integer() else str(num)
+    except (ValueError, AttributeError):
+        return normalized
+
 def call_agent(agent_id, system_prompt, user_prompt, condition, tool_result=None):
-    if AGENT_TOOL_ACCESS[agent_id] and condition in ["Implicit", "Explicit"] and tool_result is not None:
+    if AGENT_TOOL_ACCESS[agent_id] and condition == "Explicit_Autonomous" and tool_result is not None:
+        return get_tool_autonomous_response(system_prompt, user_prompt, tool_result)
+    elif AGENT_TOOL_ACCESS[agent_id] and condition in ["Implicit", "Explicit"] and tool_result is not None:
         return get_tool_intercepted_response(system_prompt, user_prompt, tool_result)
     else:
         return get_json_response(system_prompt, user_prompt)
@@ -51,6 +67,11 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
                 user_prompt = f"Problem: {q_text}\n\n[Previous Round Responses]\n{feedback}\n\nConsider the above and provide your revised argument."
             
             response = call_agent(agent_id, sys_prompt, user_prompt, condition, tool_value if agent_id == "A" else None)
+            
+            if response.get("answer") == "Error":
+                print(f"\n❌ API Error in Agent {agent_id} Round {round_num}. Debate invalidated.")
+                return None
+            
             round_responses[agent_id] = response
         
         for agent_id in ["A", "B", "C"]:
@@ -61,9 +82,14 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
     agent_b_final = agent_responses["B"][2]['answer']
     agent_c_final = agent_responses["C"][2]['answer']
     
-    a_is_correct = 1 if agent_a_final == str(ground_truth) else 0
-    b_is_correct = 1 if agent_b_final == str(ground_truth) else 0
-    c_is_correct = 1 if agent_c_final == str(ground_truth) else 0
+    a_is_correct = 1 if normalize_answer(agent_a_final) == normalize_answer(str(ground_truth)) else 0
+    b_is_correct = 1 if normalize_answer(agent_b_final) == normalize_answer(str(ground_truth)) else 0
+    c_is_correct = 1 if normalize_answer(agent_c_final) == normalize_answer(str(ground_truth)) else 0
+    
+    tool_used_count = sum(
+        1 for round_idx in range(3)
+        if agent_responses["A"][round_idx].get("tool_used", False)
+    )
     
     total_challenges = sum(
         count_challenges(agent_responses[agent][round_idx]['reasoning'])
@@ -71,9 +97,9 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
         for round_idx in range(3)
     )
     
-    is_persuaded = 1 if (agent_responses["A"][0]['answer'] != str(ground_truth)) and (agent_b_final == agent_a_final or agent_c_final == agent_a_final) else 0
+    is_persuaded = 1 if (a_is_correct == 0) and (normalize_answer(agent_b_final) == normalize_answer(agent_a_final) or normalize_answer(agent_c_final) == normalize_answer(agent_a_final)) else 0
     
-    print(f"\n--- [결과] Agent A 정답: {a_is_correct} | Agent B 정답: {b_is_correct} | Agent C 정답: {c_is_correct} | 동조: {is_persuaded} ---\n")
+    print(f"\n--- [결과] Agent A 정답: {a_is_correct} | Agent B 정답: {b_is_correct} | Agent C 정답: {c_is_correct} | 동조: {is_persuaded} | 도구 사용 횟수: {tool_used_count} ---\n")
     
     return {
         "question_id": question_id,
@@ -87,6 +113,7 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
         "c_is_correct": c_is_correct,
         "is_persuaded": is_persuaded,
         "challenge_count": total_challenges,
+        "tool_used_count": tool_used_count,
         "full_log": f"R1: A={agent_responses['A'][0]['answer']} B={agent_responses['B'][0]['answer']} C={agent_responses['C'][0]['answer']} | "
                    f"R2: A={agent_responses['A'][1]['answer']} B={agent_responses['B'][1]['answer']} C={agent_responses['C'][1]['answer']} | "
                    f"R3: A={agent_responses['A'][2]['answer']} B={agent_responses['B'][2]['answer']} C={agent_responses['C'][2]['answer']}"
@@ -97,12 +124,17 @@ def main():
         dataset = json.load(f)
     
     all_results = []
+    skipped_count = 0
     print(f"🚀 [Function Calling 탑재] 순수 파이썬 API 실험 시작... (총 {len(dataset)}문제)")
     
     for data in dataset:
         for cond in CONDITIONS:
             res = run_single_debate(data["id"], data["text"], data["ground_truth"], data["distractor"], cond, tool_acc=0.0)
-            all_results.append(res)
+            if res is None:
+                skipped_count += 1
+                print(f"⚠️  Skipped debate #{data['id']} condition {cond} due to error")
+            else:
+                all_results.append(res)
 
     output_dir = "results"
     if not os.path.exists(output_dir):
@@ -110,11 +142,13 @@ def main():
 
     output_path = os.path.join(output_dir, 'debate_experiment_results.csv')
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
-        writer.writeheader()
-        writer.writerows(all_results)
+        if all_results:
+            writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
+            writer.writeheader()
+            writer.writerows(all_results)
         
     print(f"\n✅ 실험 완료! 결과가 '{output_path}'에 저장되었습니다.")
+    print(f"📊 총 {len(all_results)}개 토론 완료, {skipped_count}개 스킵됨")
 
 if __name__ == "__main__":
     main()
