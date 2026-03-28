@@ -96,11 +96,27 @@ def load_dataset_generic(source: str, max_examples: Optional[int] = None, hf_spl
         return load_local_json(path, max_examples=max_examples)
     
     if source.startswith("hf:"):
+        # "hf:" 부분을 제거
         spec = source.split("hf:", 1)[1]
         parts = spec.split(":")
-        name = parts[0]
-        split = parts[1] if len(parts) > 1 else hf_split
-        return load_huggingface_dataset(name, split=split, max_examples=max_examples)
+        
+        # 파트 개수에 따라 변수 할당 처리
+        if len(parts) == 1:
+            # 예: "hf:gsm8k"
+            hf_spec_arg = parts[0]
+            split_arg = hf_split
+        elif len(parts) == 2:
+            # 예: "hf:gsm8k:main" (이름과 설정만 있는 경우) 또는 "hf:gsm8k:train" (이름과 스플릿만 있는 경우)
+            # 여기서는 두 번째 파트를 config로 간주하고 스플릿은 기본값을 사용하도록 처리하는 것이 일반적입니다.
+            hf_spec_arg = f"{parts[0]}:{parts[1]}"
+            split_arg = hf_split
+        elif len(parts) >= 3:
+            # 예: "hf:gsm8k:main:train"
+            # 첫 번째와 두 번째 파트를 합쳐서 hf_spec으로 만듦 ("gsm8k:main")
+            hf_spec_arg = f"{parts[0]}:{parts[1]}"
+            split_arg = parts[2]
+        
+        return load_huggingface_dataset(hf_spec_arg, split=split_arg, max_examples=max_examples)
     
     raise ValueError(f"Unknown source prefix. Use json: or hf:. Got {source}")
 

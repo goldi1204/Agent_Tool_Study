@@ -7,6 +7,8 @@ from configs.prompts import SYSTEM_PROMPTS, CONDITIONS
 from src.tools import simulate_tool
 from src.utils import get_json_response, get_tool_intercepted_response, get_tool_autonomous_response, count_challenges
 from src.dataset_loaders import load_dataset_generic, validate_dataset_schema
+from src.result_formatter import format_debate_transcript, format_debate_json, create_summary_html, create_markdown_summary
+from src.data_loader import get_hf_hotpotqa_dataset
 
 AGENT_TOOL_ACCESS = {
     "A": True,
@@ -36,9 +38,19 @@ def call_agent(agent_id, system_prompt, user_prompt, condition, tool_result=None
     else:
         return get_json_response(system_prompt, user_prompt)
 
-def run_single_debate(question_id, q_text, ground_truth, distractor, condition, tool_acc):
+def run_single_debate(question_id, q_text, ground_truth, distractor, condition, tool_acc, use_external_tool=False):
     
-    tool_value = simulate_tool(ground_truth, distractor, tool_acc)
+    if use_external_tool:
+        from src.tools import hybrid_tool
+        tool_value = hybrid_tool(
+            query=q_text,
+            ground_truth=ground_truth,
+            distractor=distractor,
+            accuracy=tool_acc,
+            use_external=True
+        )
+    else:
+        tool_value = simulate_tool(ground_truth, distractor, tool_acc)
     
     print(f"\n--- [토론 시작] 조건: {condition} | 개입될 도구 결과: {tool_value} ---")
     
@@ -102,7 +114,7 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
     
     print(f"\n--- [결과] Agent A 정답: {a_is_correct} | Agent B 정답: {b_is_correct} | Agent C 정답: {c_is_correct} | 동조: {is_persuaded} | 도구 사용 횟수: {tool_used_count} ---\n")
     
-    return {
+    metrics = {
         "question_id": question_id,
         "condition": condition,
         "tool_accuracy": tool_acc,
@@ -119,10 +131,14 @@ def run_single_debate(question_id, q_text, ground_truth, distractor, condition, 
                    f"R2: A={agent_responses['A'][1]['answer']} B={agent_responses['B'][1]['answer']} C={agent_responses['C'][1]['answer']} | "
                    f"R3: A={agent_responses['A'][2]['answer']} B={agent_responses['B'][2]['answer']} C={agent_responses['C'][2]['answer']}"
     }
+    
+    return metrics, agent_responses
 
 def main():
     DATA_SOURCE = os.getenv("DATA_SOURCE", "json:dataset.json")
     MAX_EXAMPLES = int(os.getenv("MAX_EXAMPLES", "0"))
+    USE_EXTERNAL_TOOL = os.getenv("USE_EXTERNAL_TOOL", "false").lower() == "true"
+    SAVE_TRANSCRIPTS = os.getenv("SAVE_TRANSCRIPTS", "true").lower() == "true"
     
     max_examples = MAX_EXAMPLES if MAX_EXAMPLES > 0 else None
     dataset = load_dataset_generic(DATA_SOURCE, max_examples=max_examples)
@@ -134,15 +150,69 @@ def main():
     print(f"📊 데이터 소스: {DATA_SOURCE}")
     if max_examples:
         print(f"🔢 최대 예제 수: {max_examples}")
+    if USE_EXTERNAL_TOOL:
+        print(f"🔍 외부 검색 도구: 활성화")
+    if SAVE_TRANSCRIPTS:
+        print(f"💾 토론 기록 저장: 활성화")
     
     for data in dataset:
         for cond in CONDITIONS:
-            res = run_single_debate(data["id"], data["text"], data["ground_truth"], data["distractor"], cond, tool_acc=0.0)
-            if res is None:
+            result = run_single_debate(
+                data["id"], 
+                data["text"], 
+                data["ground_truth"], 
+                data["distractor"], 
+                cond, 
+                tool_acc=0.0,
+                use_external_tool=USE_EXTERNAL_TOOL
+            )
+            
+            if result is None:
                 skipped_count += 1
                 print(f"⚠️  Skipped debate #{data['id']} condition {cond} due to error")
             else:
-                all_results.append(res)
+                metrics, agent_responses = result
+                all_results.append(metrics)
+                
+                if SAVE_TRANSCRIPTS:
+                    from src.tools import simulate_tool, hybrid_tool
+                    
+                    if USE_EXTERNAL_TOOL:
+                        tool_value = hybrid_tool(
+                            query=data["text"],
+                            ground_truth=data["ground_truth"],
+                            distractor=data["distractor"],
+                            accuracy=0.0,
+                            use_external=True
+                        )
+                    else:
+                        tool_value = simulate_tool(data["ground_truth"], data["distractor"], 0.0)
+                    
+                    txt_file = format_debate_transcript(
+                        question_id=data["id"],
+                        q_text=data["text"],
+                        ground_truth=data["ground_truth"],
+                        distractor=data["distractor"],
+                        condition=cond,
+                        tool_acc=0.0,
+                        tool_value=tool_value,
+                        agent_responses=agent_responses,
+                        metrics=metrics
+                    )
+                    
+                    json_file = format_debate_json(
+                        question_id=data["id"],
+                        q_text=data["text"],
+                        ground_truth=data["ground_truth"],
+                        distractor=data["distractor"],
+                        condition=cond,
+                        tool_acc=0.0,
+                        tool_value=tool_value,
+                        agent_responses=agent_responses,
+                        metrics=metrics
+                    )
+                    
+                    print(f"  💾 토론 기록 저장: {txt_file}")
 
     output_dir = "results"
     if not os.path.exists(output_dir):
@@ -154,9 +224,16 @@ def main():
             writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
             writer.writeheader()
             writer.writerows(all_results)
-        
+    
     print(f"\n✅ 실험 완료! 결과가 '{output_path}'에 저장되었습니다.")
     print(f"📊 총 {len(all_results)}개 토론 완료, {skipped_count}개 스킵됨")
+    
+    if all_results:
+        print(f"\n📝 요약 보고서 생성 중...")
+        html_summary = create_summary_html(all_results)
+        md_summary = create_markdown_summary(all_results)
+        print(f"  ✅ HTML 요약: {html_summary}")
+        print(f"  ✅ Markdown 요약: {md_summary}")
 
 if __name__ == "__main__":
     main()
